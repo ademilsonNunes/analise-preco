@@ -1,0 +1,25 @@
+# App core
+typing-extensions==4.11.0
+pandas==2.2.1
+numpy==1.26.4
+openpyxl==3.1.2
+pyarrow==15.0.2
+streamlit==1.33.0
+
+# Visualização
+plotly==5.20.0
+matplotlib==3.8.4
+
+# Dev tools
+pytest==8.1.1
+black==24.3.0
+
+# OBS: flake8 pode gerar erro no Windows devido a conflito com pyflakes.exe
+# Para instalar manualmente com força, use:
+# pip install --upgrade --force-reinstall flake8
+flake8==7.0.0
+
+#dotenv
+python-dotenv
+
+fpdf

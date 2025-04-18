@@ -1,0 +1,40 @@
+/* Título principal */
+h1 {
+    color: #0F5B99;
+    font-weight: 700;
+    margin-bottom: 1rem;
+}
+
+/* Subtítulo e markdowns */
+h2, h3, h4 {
+    color: #3a3a3a;
+    margin-top: 1rem;
+}
+
+/* Cards streamlit */
+div[data-testid="metric-container"] {
+    background-color: #F8F9FA;
+    padding: 15px;
+    border: 1px solid #DADCE0;
+    border-radius: 12px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    margin: 4px;
+}
+
+div[data-testid="metric-container"] > label {
+    font-weight: bold;
+    color: #333;
+}
+
+/* Tabela ajustada */
+thead th {
+    background-color: #0F5B99;
+    color: white;
+    font-weight: bold;
+}
+
+/* Remove fundo dos botões */
+button[kind="primary"] {
+    background-color: #0F5B99;
+    color: white;
+}

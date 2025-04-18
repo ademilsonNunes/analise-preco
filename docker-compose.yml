@@ -1,0 +1,13 @@
+version: "3.9"
+
+services:
+  dashboard:
+    build: .
+    container_name: gestao_comercial
+    ports:
+      - "8501:8501"
+    volumes:
+      - .:/app  # Mapeia pasta local para desenvolvimento
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
