@@ -15,7 +15,7 @@ from views import (
     analise_disparidade_precos
 )
 
-# Configuração de página
+# Configuração da página
 st.set_page_config(page_title="Dashboard - Gestão Comercial", layout="wide")
 
 # Estilo CSS
@@ -49,11 +49,36 @@ except Exception as e:
     st.error(f"⚠️ Erro ao carregar dados: {str(e)}")
     st.stop()
 
-# Filtros
-filtros = FiltroDinamico(df).exibir_filtros()
+# Inicialização de filtros na sessão
+if "filtros" not in st.session_state:
+    st.session_state["filtros"] = {
+        "SUPERVISOR": "Todos",
+        "REDE": "Todos",
+        "VENDEDOR": "Todos",
+        "CLIENTE": "Todos",
+        "DESC": "Todos",
+        "COD.PRD": "Todos",
+        "NATUREZA": "Todos"
+    }
+
+# Botão para resetar filtros
+if st.sidebar.button("🗑️ Limpar Filtros", key="limpar_filtros_btn"):
+    st.session_state["filtros"] = {
+        "SUPERVISOR": "Todos",
+        "REDE": "Todos",
+        "VENDEDOR": "Todos",
+        "CLIENTE": "Todos",
+        "DESC": "Todos",
+        "COD.PRD": "Todos",
+        "NATUREZA": "Todos"
+    }
+
+# Exibir filtros e atualizar session_state
+filtro_dinamico = FiltroDinamico(df)
+filtros = filtro_dinamico.exibir_filtros()
 st.session_state["filtros"] = filtros
 
-# Roteamento
+# Roteamento das páginas
 if pagina == "Resumo Executivo":
     dashboard = resumo_executivo.Dashboard(df)
     dashboard.run()
@@ -68,12 +93,12 @@ elif pagina == "Análise por Vendedor":
 elif pagina == "Positivação de Clientes":
     positivacao_clientes.run(df)
 elif pagina == "Análise de Bonificações":
-    analise_bonificacoes.run(df)    
+    analise_bonificacoes.run(df)
 elif pagina == "Análise de Devoluções":
-    analise_devolucoes.run(df)    
+    analise_devolucoes.run(df)
 elif pagina == "Análise de Verbas":
     analise_verba.run(df)
 elif pagina == "Análise de Contratos":
-    analise_contratos.run(df)    
-elif pagina == "Análise de Disparidade de Preços":     
+    analise_contratos.run(df)
+elif pagina == "Análise de Disparidade de Preços":
     analise_disparidade_precos.run(df)

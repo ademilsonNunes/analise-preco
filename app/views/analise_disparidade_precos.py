@@ -281,9 +281,10 @@ def run(df: pd.DataFrame):
     total_analise = len(df_join)
     abaixo_media = (df_join["STATUS"] == "Oportunidade (-)").sum()
     acima_media = (df_join["STATUS"] == "Oportunidade (+)").sum()
-
+   
     # Tabelas por perfil
     st.markdown("### 📋 Tabelas por Cluster de Perfil de Cliente")
+    has_vendedor = "VENDEDOR" in df_join.columns
     for perfil in df_join["PERFIL_CLIENTE"].unique():
         st.markdown(f"#### 📌 Perfil: {perfil}")
         columns = ["CLIENTE", "VENDEDOR", "DESC", "QTDE", "VL.BRUTO", "FAIXA_FATURAMENTO", "PRECO_UNIT", "PRECO_CLUSTER_MEDIA", "IAP_CLUSTER", "STATUS_ICON"] if has_vendedor else ["CLIENTE", "DESC", "QTDE", "VL.BRUTO", "FAIXA_FATURAMENTO", "PRECO_UNIT", "PRECO_CLUSTER_MEDIA", "IAP_CLUSTER", "STATUS_ICON"]
@@ -458,3 +459,15 @@ def run(df: pd.DataFrame):
         st.plotly_chart(fig_vlbruto, use_container_width=True)
 
     st.success("✅ Análise validada e ajustada com base na lógica correta de clientes, clusters e indicadores.")
+    # Exportação dos dados analisados
+    st.markdown("### 📥 Exportar Dados da Análise")
+    if st.button("⬇️ Baixar análise em Excel", key="exportar_disparidade_button"):
+        nome_arquivo = "analise_disparidade_precos.xlsx"
+        with pd.ExcelWriter(nome_arquivo, engine="xlsxwriter") as writer:
+            df_join.to_excel(writer, sheet_name="Detalhado", index=False)
+            consolidado.to_excel(writer, sheet_name="Consolidado", index=False)
+            lowest_iap.to_excel(writer, sheet_name="Top_Oportunidade", index=False)
+            highest_iap.to_excel(writer, sheet_name="Top_Ajuste", index=False)
+        with open(nome_arquivo, "rb") as f:
+            st.download_button("📂 Baixar Arquivo", f, file_name=nome_arquivo)
+    
