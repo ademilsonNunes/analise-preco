@@ -5,7 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from data.processor import Agrupador
 from layout.cards import indicador_simples
-
+from layout.filters import FiltroDinamico
 
 # Funções utilitárias para formatação
 def format_currency(value):
@@ -40,36 +40,45 @@ def run(df: pd.DataFrame):
         Uma validação alerta se alguma faixa tiver menos de 5% dos registros, sugerindo ajustes.
         """)
 
-    filtros = st.session_state.get("filtros", {})
-    for campo, valor in filtros.items():
-        if campo in df.columns:
-            if isinstance(valor, list) and valor:
-                df = df[df[campo].isin(valor)]
-            elif valor != "Todos":
-                df = df[df[campo] == valor]
+    # Exibir filtros dinâmicos e obter valores
+    filtro_dinamico = FiltroDinamico(df)
+    filtros = filtro_dinamico.exibir_filtros()
 
+    # Depuração: Verificar o estado do DataFrame inicial
+    st.sidebar.markdown(f"**Registros iniciais:** {len(df)}")
+
+    # Aplicar filtros usando Agrupador
     processor = Agrupador(df)
     df_filtrado = processor.filtrar(filtros)
-    df_filtrado = df_filtrado[df_filtrado["CLIENTE"] != "CLIENTE PADRAO-000001"]
 
+    # Depuração: Verificar após aplicação dos filtros
+    st.sidebar.markdown(f"**Registros após filtros:** {len(df_filtrado)}")
+    if len(df_filtrado) == 0:
+        st.sidebar.markdown("**Filtros Aplicados:**")
+        for campo, valor in filtros.items():
+            st.sidebar.markdown(f"- {campo}: {valor}")
+        st.sidebar.markdown("**Valores Únicos no DataFrame Inicial:**")
+        for col in ["SUPERVISOR", "VENDEDOR", "CLIENTE", "DESC", "COD.PRD", "REDE", "NATUREZA"]:
+            if col in df.columns:
+                valores = sorted([x for x in df[col].dropna().unique() if x])
+                st.sidebar.markdown(f"- {col}: {', '.join(map(str, valores))}")
+
+    # Filtro manual para remover cliente padrão
+    clientes_antes = len(df_filtrado)
+    df_filtrado = df_filtrado[df_filtrado["CLIENTE"] != "CLIENTE PADRAO-000001"]
+    clientes_removidos = clientes_antes - len(df_filtrado)
+
+    # Depuração: Verificar após filtro de cliente
+    st.sidebar.markdown(f"**Registros após remover cliente padrão:** {len(df_filtrado)}")
+    if clientes_removidos > 0:
+        st.sidebar.markdown(f"**Clientes removidos (CLIENTE PADRAO-000001):** {clientes_removidos}")
+
+    # Verificar se o DataFrame está vazio
     if df_filtrado.empty:
         st.warning("⚠️ Nenhum dado encontrado com os filtros aplicados.")
+        st.markdown("**Dica:** Verifique os filtros aplicados na sidebar. Tente ajustar os filtros de 'Natureza', 'Cliente', 'Produto', ou outros para incluir mais dados.")
         return
-
-    df_filtrado["PRECO_UNIT"] = pd.to_numeric(df_filtrado["PRECO_UNIT"], errors="coerce")
-    df_filtrado["VL.BRUTO"] = pd.to_numeric(df_filtrado["VL.BRUTO"], errors="coerce")
-    df_filtrado["QTDE"] = pd.to_numeric(df_filtrado["QTDE"], errors="coerce")
-
-    # Validação de dados para clusterização
-    if df_filtrado["QTDE"].nunique() < 2 or df_filtrado["VL.BRUTO"].nunique() < 2:
-        st.error("Erro: Dados insuficientes para clusterização. As colunas QTDE e VL.BRUTO precisam de variação.")
-        return
-
-    # Verificar se a coluna VENDEDOR existe
-    has_vendedor = "VENDEDOR" in df_filtrado.columns
-    if not has_vendedor:
-        st.warning("⚠️ Coluna 'VENDEDOR' não encontrada no conjunto de dados. Prosseguindo sem ela.")
-
+    
     # Configurações de clusterização
     st.markdown("### ⚙️ Configurações de Clusterização")
     st.markdown("*Os valores padrão (agrupamento por 'Ambos' e 4 faixas) são usados automaticamente, mas podem ser ajustados abaixo.*")

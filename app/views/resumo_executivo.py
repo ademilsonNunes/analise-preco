@@ -2,101 +2,108 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from io import BytesIO
-from datetime import datetime
 import numpy as np
-from typing import List, Dict, Optional
+from typing import List, Dict
+from data.processor import Agrupador
+from layout.cards import IndicadoresResumo
+from layout.charts import ChartBuilder
+from layout.rankings import Rankings
 
-# Configurações centralizadas
+# Configurações
 CONFIG = {
-    "REAJUSTE_LIMITE": 5.0,  # Limite para considerar reajuste insuficiente (%)
+    "REAJUSTE_LIMITE": 5.0,
     "EXPORT_FILENAME": "analise_faturamento.xlsx",
     "COLOR_PALETTE": {
-        "primary": "#1f77b4",  # Azul para faturamento
-        "warning": "#ff7f0e",  # Laranja para alertas
-        "success": "#2ca02c",  # Verde para conformidade
+        "primary": "#1f77b4",
+        "warning": "#ff7f0e",
+        "success": "#2ca02c",
     },
     "REQUIRED_COLUMNS": [
-        "EMISSAO", "VL.BRUTO", "PRECO_UNIT", "DESC", "COD.PRD", "ANO_MES", "CLIENTE"
+        "EMISSAO", "VL.BRUTO", "PRECO_UNIT", "DESC", "COD.PRD", "ANO_MES", "CLIENTE", "QTDE", "NATUREZA", "VENDEDOR"
     ],
 }
 
 class DataValidator:
-    """Valida a integridade do DataFrame de entrada."""
-    
+    """Valida a integridade do DataFrame."""
     @staticmethod
     def validate(df: pd.DataFrame, required_cols: List[str]) -> bool:
-        """Verifica colunas obrigatórias e tipos de dados."""
         missing_cols = [col for col in required_cols if col not in df.columns]
         if missing_cols:
             st.error(f"⚠️ Colunas ausentes: {', '.join(missing_cols)}")
             return False
-        
-        # Verifica tipos de dados
         if not pd.api.types.is_datetime64_any_dtype(df["EMISSAO"]):
             st.error("⚠️ Coluna 'EMISSAO' deve ser do tipo datetime.")
             return False
-        
-        if df[["VL.BRUTO", "PRECO_UNIT", "QTDE"]].lt(0).any().any():
-            st.error("⚠️ Valores negativos encontrados em 'VL.BRUTO', 'PRECO_UNIT' ou 'QTDE'.")
+        mask_venda = df["NATUREZA"] == "VENDA"
+        if mask_venda.any() and df[mask_venda][["VL.BRUTO", "PRECO_UNIT", "QTDE"]].lt(0).any().any():
+            st.error("⚠️ Valores negativos encontrados em 'VL.BRUTO', 'PRECO_UNIT' ou 'QTDE' para VENDA.")
             return False
-            
         return True
 
 class ParetoAnalyzer:
-    """Realiza análises 20/80 (Pareto) para grupos específicos."""
-    
+    """Realiza análises 20/80."""
     def __init__(self, df: pd.DataFrame, group_by: str, value_col: str = "VL.BRUTO"):
         self.df = df
         self.group_by = group_by
         self.value_col = value_col
     
     def analyze(self, threshold: float = 0.8) -> pd.DataFrame:
-        """Calcula o top 80% de faturamento e variações de preço."""
-        grouped = self.df.groupby(self.group_by).agg({
-            self.value_col: "sum",
-            "PRECO_UNIT": ["first", "last", "mean"],
-            "QTDE": "sum"
-        }).reset_index()
+        if self.group_by == "VENDEDOR":
+            # Para group_by="VENDEDOR", não precisamos selecionar um vendedor
+            grouped = self.df.groupby(self.group_by).agg({
+                self.value_col: "sum",
+                "PRECO_UNIT": ["first", "last", "mean"],
+                "QTDE": "sum"
+            }).reset_index()
+            grouped.columns = [
+                self.group_by, "FATURAMENTO", "PRECO_INICIAL", "PRECO_FINAL", "PRECO_MEDIO", "VOLUME"
+            ]
+        else:
+            # Selecionar o vendedor com maior faturamento por group_by
+            vendedor_agg = self.df.groupby([self.group_by, "VENDEDOR"]).agg({
+                self.value_col: "sum"
+            }).reset_index()
+            vendedor_max = vendedor_agg.loc[vendedor_agg.groupby(self.group_by)[self.value_col].idxmax()]
+            
+            # Agregar métricas principais
+            grouped = self.df.groupby(self.group_by).agg({
+                self.value_col: "sum",
+                "PRECO_UNIT": ["first", "last", "mean"],
+                "QTDE": "sum"
+            }).reset_index()
+            grouped.columns = [
+                self.group_by, "FATURAMENTO", "PRECO_INICIAL", "PRECO_FINAL", "PRECO_MEDIO", "VOLUME"
+            ]
+            
+            # Mesclar com vendedor selecionado
+            grouped = grouped.merge(
+                vendedor_max[[self.group_by, "VENDEDOR"]],
+                on=self.group_by,
+                how="left"
+            )
         
-        grouped.columns = [
-            self.group_by, "FATURAMENTO", "PRECO_INICIAL", "PRECO_FINAL", 
-            "PRECO_MEDIO", "VOLUME"
-        ]
-        
-        # Calcula variação de preço
         grouped["VAR_PRECO_%"] = (
-            (grouped["PRECO_FINAL"] - grouped["PRECO_INICIAL"]) / 
-            grouped["PRECO_INICIAL"] * 100
+            (grouped["PRECO_FINAL"] - grouped["PRECO_INICIAL"]) / grouped["PRECO_INICIAL"] * 100
         ).fillna(0).replace([np.inf, -np.inf], 0)
-        
-        # Calcula acumulado para Pareto
         grouped = grouped.sort_values("FATURAMENTO", ascending=False)
         grouped["ACUM_%"] = grouped["FATURAMENTO"].cumsum() / grouped["FATURAMENTO"].sum()
-        
-        # Adiciona classificação de reajuste
-        def classify_reajuste(var: float) -> str:
-            if pd.isna(var) or var == 0:
-                return "Sem Reajuste"
-            elif var < CONFIG["REAJUSTE_LIMITE"]:
-                return f"Reajuste < {CONFIG['REAJUSTE_LIMITE']}%"
-            return f"Reajuste ≥ {CONFIG['REAJUSTE_LIMITE']}%"
-        
-        grouped["REAJUSTE"] = grouped["VAR_PRECO_%"].apply(classify_reajuste)
-        
+        grouped["REAJUSTE"] = grouped["VAR_PRECO_%"].apply(
+            lambda x: "Sem Reajuste" if x == 0 else f"Reajuste < {CONFIG['REAJUSTE_LIMITE']}%" if x < CONFIG["REAJUSTE_LIMITE"] else f"Reajuste ≥ {CONFIG['REAJUSTE_LIMITE']}%"
+        )
         return grouped[grouped["ACUM_%"] <= threshold]
     
     def plot_pareto(self, title: str) -> px.bar:
-        """Gera gráfico de Pareto."""
         df = self.analyze()
         df["FATURAMENTO_MILHOES"] = df["FATURAMENTO"] / 1_000_000
-        
+        hover_data = ["VENDEDOR"] if self.group_by != "VENDEDOR" else []
         fig = px.bar(
             df,
             x=self.group_by,
             y="FATURAMENTO_MILHOES",
             labels={"FATURAMENTO_MILHOES": "Faturamento (R$ Milhões)", self.group_by: self.group_by.capitalize()},
             title=title,
-            color_discrete_sequence=[CONFIG["COLOR_PALETTE"]["primary"]]
+            color_discrete_sequence=[CONFIG["COLOR_PALETTE"]["primary"]],
+            hover_data=hover_data
         )
         fig.add_scatter(
             x=df[self.group_by],
@@ -114,49 +121,37 @@ class ParetoAnalyzer:
         )
         return fig
 
-class PriceElasticityAnalyzer:
-    """Analisa elasticidade de preço por produto."""
-    
+class VendedorAnalyzer:
+    """Calcula métricas por vendedor."""
     def __init__(self, df: pd.DataFrame):
         self.df = df
     
-    def calculate_elasticity(self) -> pd.DataFrame:
-        """Calcula elasticidade preço-demanda por produto."""
-        grouped = self.df.groupby(["COD.PRD", "DESC", "ANO_MES"]).agg({
-            "PRECO_UNIT": "mean",
-            "QTDE": "sum"
+    def analyze(self) -> pd.DataFrame:
+        grouped = self.df[self.df["NATUREZA"] == "VENDA"].groupby("VENDEDOR").agg({
+            "VL.BRUTO": "sum",
+            "QTDE": "sum",
+            "CLIENTE": "nunique",
+            "PRECO_UNIT": ["first", "last"]
         }).reset_index()
-        
-        elasticities = []
-        for (cod, desc), group in grouped.groupby(["COD.PRD", "DESC"]):
-            group = group.sort_values("ANO_MES")
-            if len(group) >= 2:
-                price_diff = group["PRECO_UNIT"].pct_change() * 100
-                qty_diff = group["QTDE"].pct_change() * 100
-                elasticity = qty_diff / price_diff
-                elasticity = elasticity.replace([np.inf, -np.inf], np.nan).mean()
-                if not pd.isna(elasticity):
-                    elasticities.append({
-                        "SKU": cod,
-                        "Produto": desc,
-                        "Elasticidade": elasticity,
-                        "Categoria": "Elástica" if abs(elasticity) > 1 else "Inelástica"
-                    })
-        
-        return pd.DataFrame(elasticities)
+        grouped.columns = [
+            "VENDEDOR", "FATURAMENTO", "VOLUME", "CLIENTES_DISTINTOS", "PRECO_INICIAL", "PRECO_FINAL"
+        ]
+        grouped["TICKET_MEDIO"] = grouped["FATURAMENTO"] / grouped["CLIENTES_DISTINTOS"]
+        grouped["VAR_PRECO_%"] = (
+            (grouped["PRECO_FINAL"] - grouped["PRECO_INICIAL"]) / grouped["PRECO_INICIAL"] * 100
+        ).fillna(0).replace([np.inf, -np.inf], 0)
+        return grouped.sort_values("FATURAMENTO", ascending=False)
 
 class Dashboard:
-    """Gerencia o dashboard Streamlit."""
-    
+    """Gerencia o dashboard Resumo Executivo."""
     def __init__(self, df: pd.DataFrame):
         self.df = df
         self.validator = DataValidator()
+        self.processor = Agrupador(df)
     
     def apply_filters(self) -> pd.DataFrame:
-        """Aplica filtros de data e session_state."""
         data_min = self.df["EMISSAO"].min()
         data_max = self.df["EMISSAO"].max()
-        
         col1, col2 = st.sidebar.columns(2)
         data_ini = col1.date_input(
             "🗓️ Data Inicial", value=data_min, min_value=data_min, max_value=data_max
@@ -164,37 +159,21 @@ class Dashboard:
         data_fim = col2.date_input(
             "🗓️ Data Final", value=data_max, min_value=data_min, max_value=data_max
         )
-        
         df_filtered = self.df[
-            (self.df["EMISSAO"] >= pd.to_datetime(data_ini)) & 
+            (self.df["EMISSAO"] >= pd.to_datetime(data_ini)) &
             (self.df["EMISSAO"] <= pd.to_datetime(data_fim))
         ]
-        
-        # Filtros adicionais
-        skus = st.sidebar.multiselect("🔎 SKUs", options=self.df["COD.PRD"].unique())
-        if skus:
-            df_filtered = df_filtered[df_filtered["COD.PRD"].isin(skus)]
-        
+        filtros = st.session_state.get("filtros", {})
+        df_filtered = self.processor.filtrar(filtros)
         return df_filtered
     
-    def display_kpis(self, df: pd.DataFrame):
-        """Exibe KPIs principais."""
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Faturamento Total", f"R$ {df['VL.BRUTO'].sum():,.2f}")
-        col2.metric("Produtos Únicos", len(df["COD.PRD"].unique()))
-        col3.metric("Preço Médio", f"R$ {df['PRECO_UNIT'].mean():.2f}")
-    
     def display_pareto(self, df: pd.DataFrame, group_by: str, title: str):
-        """Exibe análise Pareto."""
         st.subheader(title)
         analyzer = ParetoAnalyzer(df, group_by=group_by)
         top_80 = analyzer.analyze()
-        
         if top_80.empty:
             st.warning(f"⚠️ Nenhum dado disponível para {group_by.lower()}.")
             return
-        
-        # Formatação da tabela
         st.dataframe(
             top_80.style.format({
                 "FATURAMENTO": "R$ {:,.2f}",
@@ -204,123 +183,119 @@ class Dashboard:
                 "VAR_PRECO_%": "{:.2f}%",
                 "ACUM_%": "{:.2%}",
                 "VOLUME": "{:,.0f}"
-            }).background_gradient(
-                cmap="RdYlGn", subset=["VAR_PRECO_%"], vmin=-CONFIG["REAJUSTE_LIMITE"], vmax=CONFIG["REAJUSTE_LIMITE"]
-            ),
+            }).background_gradient(cmap="RdYlGn", subset=["VAR_PRECO_%"]),
             use_container_width=True
         )
-        
         st.plotly_chart(analyzer.plot_pareto(title), use_container_width=True)
-        
-        # Sugestões de ações
         low_reajuste = top_80[top_80["VAR_PRECO_%"] < CONFIG["REAJUSTE_LIMITE"]]
         if not low_reajuste.empty:
-            st.markdown(f"### 🔍 {group_by.capitalize()}s com Reajuste Insuficiente")
-            actions = low_reajuste[[group_by, "VAR_PRECO_%"]].copy()
+            st.markdown(f"### 🔍 {group_by.capitalize()}s com Reajuste < {CONFIG['REAJUSTE_LIMITE']}%")
+            columns = [group_by, "VENDEDOR", "VAR_PRECO_%"] if group_by != "VENDEDOR" else [group_by, "VAR_PRECO_%"]
+            actions = low_reajuste[columns].copy()
             actions["Ação Recomendada"] = actions.apply(
-                lambda row: f"Revisar preço de {row[group_by]} (reajuste de {row['VAR_PRECO_%']:.2f}%)",
+                lambda row: f"Revisar preço de {row[group_by]} (reajuste de {row['VAR_PRECO_%']:.2f}%)"
+                            if group_by == "VENDEDOR" else
+                            f"Revisar preço de {row[group_by]} com vendedor {row['VENDEDOR']} (reajuste de {row['VAR_PRECO_%']:.2f}%)",
                 axis=1
             )
             st.dataframe(actions, use_container_width=True)
     
-    def display_elasticity(self, df: pd.DataFrame):
-        """Exibe análise de elasticidade de preço."""
-        st.subheader("📈 Análise de Elasticidade de Preço")
-        elasticity_analyzer = PriceElasticityAnalyzer(df)
-        elasticity_df = elasticity_analyzer.calculate_elasticity()
-        
-        if elasticity_df.empty:
-            st.warning("⚠️ Dados insuficientes para análise de elasticidade.")
-            return
-        
+    def display_preco_table(self, df: pd.DataFrame):
+        st.subheader("📊 Evolução do Preço Unitário por SKU, Vendedor e Mês")
+        tabela_preco = df.pivot_table(
+            index=["DESC", "COD.PRD", "VENDEDOR"],
+            columns="ANO_MES",
+            values="PRECO_UNIT",
+            aggfunc="mean"
+        ).sort_index(axis=1)
+        variacao = tabela_preco.pct_change(axis=1) * 100
+        variacao.columns = [f"{col} (%)" for col in variacao.columns]
+        tabela_final = pd.concat([tabela_preco, variacao], axis=1)
         st.dataframe(
-            elasticity_df.style.format({
-                "Elasticidade": "{:.2f}",
-            }).background_gradient(cmap="RdYlGn", subset=["Elasticidade"], vmin=-2, vmax=2),
+            tabela_final.style
+            .format("{:.2f}")
+            .background_gradient(cmap='RdYlGn', axis=None, subset=variacao.columns)
+            .set_caption("💡 Preço Unitário Médio por Produto, Vendedor e Variação %"),
             use_container_width=True
         )
-        
-        # Gráfico
-        fig = px.bar(
-            elasticity_df,
-            x="Produto",
-            y="Elasticidade",
-            color="Categoria",
-            title="Elasticidade Preço-Demanda por Produto",
-            color_discrete_map={
-                "Elástica": CONFIG["COLOR_PALETTE"]["warning"],
-                "Inelástica": CONFIG["COLOR_PALETTE"]["success"]
-            }
+    
+    def display_vendedor_metrics(self, df: pd.DataFrame):
+        st.subheader("📈 Métricas por Vendedor")
+        analyzer = VendedorAnalyzer(df)
+        metrics = analyzer.analyze()
+        if metrics.empty:
+            st.warning("⚠️ Nenhum dado disponível para análise de vendedores.")
+            return
+        st.dataframe(
+            metrics.style.format({
+                "FATURAMENTO": "R$ {:,.2f}",
+                "VOLUME": "{:,.0f}",
+                "CLIENTES_DISTINTOS": "{:,.0f}",
+                "PRECO_INICIAL": "R$ {:.2f}",
+                "PRECO_FINAL": "R$ {:.2f}",
+                "TICKET_MEDIO": "R$ {:,.2f}",
+                "VAR_PRECO_%": "{:.2f}%"
+            }).background_gradient(cmap="RdYlGn", subset=["VAR_PRECO_%"]),
+            use_container_width=True
         )
-        st.plotly_chart(fig, use_container_width=True)
     
     def export_results(self, dfs: Dict[str, pd.DataFrame]):
-        """Exporta resultados para Excel."""
         st.subheader("💾 Exportar Resultados")
         if st.button("📥 Exportar para Excel"):
             output = BytesIO()
             with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
                 for sheet_name, df in dfs.items():
-                    df.to_excel(writer, sheet_name=sheet_name, index=True)
+                    df.to_excel(writer, sheet_name=sheet_name, index=False)
             output.seek(0)
             st.download_button(
-                "Download",
-                output,
+                label="⬇️ Baixar Excel",
+                data=output,
                 file_name=CONFIG["EXPORT_FILENAME"],
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
     
     def run(self):
-        """Executa o dashboard."""
-        st.title("📊 Dashboard de Faturamento e Precificação")
-        
-        # Validação inicial
         if not self.validator.validate(self.df, CONFIG["REQUIRED_COLUMNS"]):
-            return
+            st.stop()
         
-        # Filtros
+        st.subheader("📌 Visão Geral do Faturamento")
+        
         df_filtered = self.apply_filters()
-        
         if df_filtered.empty:
-            st.warning("⚠️ Nenhum dado disponível para os filtros selecionados. Ajuste os filtros e tente novamente.")
+            st.warning("⚠️ Nenhum dado disponível para os filtros selecionados.")
             return
         
-        # KPIs
-        self.display_kpis(df_filtered)
+        IndicadoresResumo(df_filtered).exibir()
         
-        # Análises Pareto
-        with st.expander("🔍 Análise 20/80", expanded=True):
-            self.display_pareto(df_filtered, "DESC", "Análise 20/80 - Produtos")
-            self.display_pareto(df_filtered, "CLIENTE", "Análise 20/80 - Clientes")
-            if "REDE" in df_filtered.columns:
-                self.display_pareto(df_filtered, "REDE", "Análise 20/80 - Redes")
+        charts = ChartBuilder(df_filtered)
+        charts.plot_preco_unitario()
+        charts.plot_volume()
         
-        # Análise de Elasticidade
-        self.display_elasticity(df_filtered)
+        self.display_preco_table(df_filtered)
         
-        # Exportação
+        self.display_vendedor_metrics(df_filtered)
+        
+        with st.expander("📊 Análise Pareto", expanded=True):
+            tabs = st.tabs(["Produtos", "Clientes", "Redes", "Vendedores"])
+            with tabs[0]:
+                self.display_pareto(df_filtered, group_by="COD.PRD", title="Top 80% Produtos por Faturamento")
+            with tabs[1]:
+                self.display_pareto(df_filtered, group_by="CLIENTE", title="Top 80% Clientes por Faturamento")
+            with tabs[2]:
+                if "REDE" in df_filtered.columns:
+                    self.display_pareto(df_filtered, group_by="REDE", title="Top 80% Redes por Faturamento")
+                else:
+                    st.warning("⚠️ Coluna 'REDE' não encontrada nos dados.")
+            with tabs[3]:
+                self.display_pareto(df_filtered, group_by="VENDEDOR", title="Top 80% Vendedores por Faturamento")
+        
+        Rankings(df_filtered).exibir()
+        
         export_dfs = {
-            "Produtos_20_80": ParetoAnalyzer(df_filtered, "DESC").analyze(),
-            "Clientes_20_80": ParetoAnalyzer(df_filtered, "CLIENTE").analyze(),
+            "Produtos": ParetoAnalyzer(df_filtered, group_by="COD.PRD").analyze(),
+            "Clientes": ParetoAnalyzer(df_filtered, group_by="CLIENTE").analyze(),
+            "Vendedores": ParetoAnalyzer(df_filtered, group_by="VENDEDOR").analyze(),
         }
         if "REDE" in df_filtered.columns:
-            export_dfs["Redes_20_80"] = ParetoAnalyzer(df_filtered, "REDE").analyze()
-        
+            export_dfs["Redes"] = ParetoAnalyzer(df_filtered, group_by="REDE").analyze()
         self.export_results(export_dfs)
-        
-        # Notas Gerenciais
-        st.subheader("📝 Notas e Ações Recomendadas")
-        st.text_area(
-            "Anotações",
-            placeholder="Ex.: Revisar preços do SKU X devido a elasticidade elástica.",
-            height=150
-        )
-
-def main():
-    # Exemplo de uso (substituir por DataFrame real)
-    df = pd.DataFrame()  # Placeholder
-    dashboard = Dashboard(df)
-    dashboard.run()
-
-if __name__ == "__main__":
-    main()

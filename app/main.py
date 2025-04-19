@@ -1,5 +1,3 @@
-# app/main.py
-
 import streamlit as st
 from data.loader import carregar_dados
 from layout.filters import FiltroDinamico
@@ -44,14 +42,21 @@ pagina = st.sidebar.selectbox("Selecione a Página", [
     "Positivação de Clientes"
 ])
 
+# Carregar dados
+try:
+    df = carregar_dados()
+except Exception as e:
+    st.error(f"⚠️ Erro ao carregar dados: {str(e)}")
+    st.stop()
+
 # Filtros
-df = carregar_dados()
 filtros = FiltroDinamico(df).exibir_filtros()
 st.session_state["filtros"] = filtros
 
 # Roteamento
 if pagina == "Resumo Executivo":
-    resumo_executivo.run(df)
+    dashboard = resumo_executivo.Dashboard(df)
+    dashboard.run()
 elif pagina == "Análise por Produto":
     analise_produto.run(df)
 elif pagina == "Análise por Cliente":

@@ -100,6 +100,7 @@ Desenvolver um painel de controle gerencial (BI) que possibilite a análise temp
 - [x] Ajustar performance para bases muito grandes (parquet particionado)
 - [x] Tela de carregamento e indicadores de progresso
 - [ ] Permitir seleção multipla em filtros como Produto, SKU e Cliente.
+- [ ] Otimizar todos as views, eliminndo informção desnecessária. 
  
 ---
 
