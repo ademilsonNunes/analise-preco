@@ -1,3 +1,4 @@
+# app/views/analise_disparidade_precos.py
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -13,7 +14,6 @@ def format_currency(value):
 
 def format_quantity(value):
     return f"{value:,.0f}".replace(",", ".")
-
 
 def run(df: pd.DataFrame):
     st.subheader("📊 Análise Gerencial de Disparidade de Preço entre Clientes de Perfis Semelhantes")
@@ -40,23 +40,27 @@ def run(df: pd.DataFrame):
         Uma validação alerta se alguma faixa tiver menos de 5% dos registros, sugerindo ajustes.
         """)
 
-    # Exibir filtros dinâmicos e obter valores
-    filtro_dinamico = FiltroDinamico(df)
-    filtros = filtro_dinamico.exibir_filtros()
+    # Instanciar FiltroDinamico com um ID único
+    filtro_dinamico = FiltroDinamico(df, filter_id="disparidade_precos")
+    # Exibir filtros (atualiza st.session_state[f"filtros_disparidade_precos"])
+    filtro_dinamico.exibir_filtros()
 
-    # Depuração: Verificar o estado do DataFrame inicial
-    st.sidebar.markdown(f"**Registros iniciais:** {len(df)}")
+    # Obter filtros do session_state
+    filtros = st.session_state.get(f"filtros_disparidade_precos", {})
+
+    # Depuração: Exibir filtros aplicados
+    st.sidebar.markdown("**Filtros Aplicados:**")
+    for campo, valor in filtros.items():
+        st.sidebar.markdown(f"- {campo}: {valor}")
 
     # Aplicar filtros usando Agrupador
     processor = Agrupador(df)
     df_filtrado = processor.filtrar(filtros)
 
-    # Depuração: Verificar após aplicação dos filtros
+    # Depuração: Verificar o estado do DataFrame
+    st.sidebar.markdown(f"**Registros iniciais:** {len(df)}")
     st.sidebar.markdown(f"**Registros após filtros:** {len(df_filtrado)}")
     if len(df_filtrado) == 0:
-        st.sidebar.markdown("**Filtros Aplicados:**")
-        for campo, valor in filtros.items():
-            st.sidebar.markdown(f"- {campo}: {valor}")
         st.sidebar.markdown("**Valores Únicos no DataFrame Inicial:**")
         for col in ["SUPERVISOR", "VENDEDOR", "CLIENTE", "DESC", "COD.PRD", "REDE", "NATUREZA"]:
             if col in df.columns:
@@ -78,15 +82,15 @@ def run(df: pd.DataFrame):
         st.warning("⚠️ Nenhum dado encontrado com os filtros aplicados.")
         st.markdown("**Dica:** Verifique os filtros aplicados na sidebar. Tente ajustar os filtros de 'Natureza', 'Cliente', 'Produto', ou outros para incluir mais dados.")
         return
-    
+
     # Configurações de clusterização
     st.markdown("### ⚙️ Configurações de Clusterização")
     st.markdown("*Os valores padrão (agrupamento por 'Ambos' e 4 faixas) são usados automaticamente, mas podem ser ajustados abaixo.*")
-    cluster_by = st.selectbox("Agrupar por", ["Volume (QTDE)", "Faturamento (VL.BRUTO)", "Ambos"], index=2)
-    n_quantiles = st.slider("Número de faixas (quantis)", 2, 6, 4)
+    cluster_by = st.selectbox("Agrupar por", ["Volume (QTDE)", "Faturamento (VL.BRUTO)", "Ambos"], index=2, key="cluster_by")
+    n_quantiles = st.slider("Número de faixas (quantis)", 2, 6, 4, key="n_quantiles")
 
     # Opção para personalizar limites
-    customize_limits = st.checkbox("Personalizar limites das faixas", value=False)
+    customize_limits = st.checkbox("Personalizar limites das faixas", value=False, key="customize_limits")
     labels_qtde, labels_vlbruto, qtde_bins, vlbruto_bins = [], [], [], []
 
     # Definir limites predefinidos
@@ -119,7 +123,6 @@ def run(df: pd.DataFrame):
 
     try:
         if customize_limits:
-            # Seleção de limites predefinidos
             if cluster_by in ["Volume (QTDE)", "Ambos"]:
                 qtde_min, qtde_max = df_filtrado["QTDE"].min(), df_filtrado["QTDE"].max()
                 st.markdown(f"**Intervalo de QTDE**: {format_quantity(qtde_min)} a {format_quantity(qtde_max)}")
@@ -134,10 +137,8 @@ def run(df: pd.DataFrame):
                             qtde_bins = value["bins"]
                             n_quantiles = value["n_quantiles"]
                             break
-                    # Ajustar bins para cobrir o intervalo real
                     qtde_bins = [qtde_min] + qtde_bins[1:-1] + [qtde_max]
                 else:
-                    # Inputs manuais
                     qtde_bins = [qtde_min]
                     st.markdown("Defina os limites intermediários para QTDE (valores crescentes):")
                     default_limits = pd.qcut(df_filtrado["QTDE"], q=n_quantiles, retbins=True)[1][1:-1]
@@ -153,13 +154,11 @@ def run(df: pd.DataFrame):
                         )
                         qtde_bins.append(limit)
                     qtde_bins.append(qtde_max)
-                # Validar limites
                 if len(set(qtde_bins)) != len(qtde_bins) or not all(qtde_bins[i] < qtde_bins[i+1] for i in range(len(qtde_bins)-1)):
                     st.error("Erro: Limites de QTDE devem ser únicos e crescentes.")
                     return
                 labels_qtde = [f"{format_quantity(qtde_bins[i])}-{format_quantity(qtde_bins[i+1])} caixas" for i in range(len(qtde_bins)-1)]
                 df_filtrado["FAIXA_VOLUMETRICA"] = pd.cut(df_filtrado["QTDE"], bins=qtde_bins, labels=labels_qtde, include_lowest=True)
-                # Validação avançada
                 counts = df_filtrado["FAIXA_VOLUMETRICA"].value_counts()
                 total_records = len(df_filtrado)
                 for faixa, count in counts.items():
@@ -197,20 +196,17 @@ def run(df: pd.DataFrame):
                         )
                         vlbruto_bins.append(limit)
                     vlbruto_bins.append(vlbruto_max)
-                # Validar limites
                 if len(set(vlbruto_bins)) != len(vlbruto_bins) or not all(vlbruto_bins[i] < vlbruto_bins[i+1] for i in range(len(vlbruto_bins)-1)):
                     st.error("Erro: Limites de VL.BRUTO devem ser únicos e crescentes.")
                     return
                 labels_vlbruto = [f"{format_currency(vlbruto_bins[i])}-{format_currency(vlbruto_bins[i+1])}" for i in range(len(vlbruto_bins)-1)]
                 df_filtrado["FAIXA_FATURAMENTO"] = pd.cut(df_filtrado["VL.BRUTO"], bins=vlbruto_bins, labels=labels_vlbruto, include_lowest=True)
-                # Validação avançada
                 counts = df_filtrado["FAIXA_FATURAMENTO"].value_counts()
                 total_records = len(df_filtrado)
                 for faixa, count in counts.items():
                     if count / total_records < 0.05:
                         st.warning(f"A faixa '{faixa}' tem apenas {count} registros ({count/total_records*100:.1f}%). Considere ajustar os limites ou usar faixas automáticas.")
         else:
-            # Clusterização padrão com quantis
             if cluster_by in ["Volume (QTDE)", "Ambos"]:
                 qtde_bins = pd.qcut(df_filtrado["QTDE"], q=n_quantiles, retbins=True)[1]
                 labels_qtde = [f"{format_quantity(qtde_bins[i])}-{format_quantity(qtde_bins[i+1])} caixas" for i in range(len(qtde_bins)-1)]
@@ -220,12 +216,11 @@ def run(df: pd.DataFrame):
                 labels_vlbruto = [f"{format_currency(vlbruto_bins[i])}-{format_currency(vlbruto_bins[i+1])}" for i in range(len(vlbruto_bins)-1)]
                 df_filtrado["FAIXA_FATURAMENTO"] = pd.qcut(df_filtrado["VL.BRUTO"], q=n_quantiles, labels=labels_vlbruto)
 
-        # Definir PERFIL_CLIENTE
         if cluster_by == "Volume (QTDE)":
             df_filtrado["PERFIL_CLIENTE"] = df_filtrado["FAIXA_VOLUMETRICA"].astype(str)
         elif cluster_by == "Faturamento (VL.BRUTO)":
             df_filtrado["PERFIL_CLIENTE"] = df_filtrado["FAIXA_FATURAMENTO"].astype(str)
-        else:  # Ambos
+        else:
             df_filtrado["PERFIL_CLIENTE"] = (
                 df_filtrado["FAIXA_VOLUMETRICA"].astype(str) + ", " + 
                 df_filtrado["FAIXA_FATURAMENTO"].astype(str)
@@ -234,8 +229,7 @@ def run(df: pd.DataFrame):
         st.error(f"Erro na clusterização: {str(e)}. Verifique os limites ou a distribuição dos dados.")
         return
 
-    # Tabela opcional com limites das faixas
-    if st.checkbox("Exibir limites das faixas"):
+    if st.checkbox("Exibir limites das faixas", key="show_limits"):
         st.markdown("#### Limites das Faixas")
         limites = []
         if cluster_by in ["Volume (QTDE)", "Ambos"]:
@@ -255,7 +249,6 @@ def run(df: pd.DataFrame):
     media_cluster.rename(columns={"PRECO_UNIT": "PRECO_CLUSTER_MEDIA"}, inplace=True)
     df_join = df_filtrado.merge(media_cluster, on=["COD.PRD", "PERFIL_CLIENTE"], how="left")
 
-    # Verificar preços médios inválidos
     if df_join["PRECO_CLUSTER_MEDIA"].isna().any() or (df_join["PRECO_CLUSTER_MEDIA"] == 0).any():
         st.error("Erro: Preços médios nulos ou zero encontrados. Verifique os dados ou filtros aplicados.")
         return
@@ -267,7 +260,6 @@ def run(df: pd.DataFrame):
         labels=["Oportunidade (-)", "Abaixo da Média", "Alinhado", "Acima da Média", "Oportunidade (+)"]
     )
 
-    # Ícones por status
     icones = {
         "Oportunidade (-)": "🔴",
         "Abaixo da Média": "🟠",
@@ -277,12 +269,10 @@ def run(df: pd.DataFrame):
     }
     df_join["STATUS_ICON"] = df_join["STATUS"].astype(str).map(icones) + " " + df_join["STATUS"].astype(str)
 
-    # Indicadores
     total_analise = len(df_join)
     abaixo_media = (df_join["STATUS"] == "Oportunidade (-)").sum()
     acima_media = (df_join["STATUS"] == "Oportunidade (+)").sum()
-   
-    # Tabelas por perfil
+
     st.markdown("### 📋 Tabelas por Cluster de Perfil de Cliente")
     has_vendedor = "VENDEDOR" in df_join.columns
     for perfil in df_join["PERFIL_CLIENTE"].unique():
@@ -297,7 +287,6 @@ def run(df: pd.DataFrame):
 
         st.dataframe(df_perf, use_container_width=True)
 
-    # Tabela consolidada com filtro por status
     st.markdown("### 📊 Tabela Consolidada por Perfil e Status")
     selected_status = st.session_state.get("selected_status", None)
     consolidado = df_join.groupby(["PERFIL_CLIENTE", "STATUS"]).agg({
@@ -318,9 +307,8 @@ def run(df: pd.DataFrame):
 
     st.dataframe(consolidado, use_container_width=True)
 
-    # Insights automatizados
     st.markdown("### 💡 Insights Automatizados")
-    n_insights = st.slider("Número de insights por categoria", 1, 10, 5)
+    n_insights = st.slider("Número de insights por categoria", 1, 10, 5, key="n_insights")
     st.markdown(f"#### Top {n_insights} Clientes com Menor IAP (Oportunidade de Aumento de Preço)")
     columns_insights = ["CLIENTE", "VENDEDOR", "DESC", "PRECO_UNIT", "PRECO_CLUSTER_MEDIA", "IAP_CLUSTER", "STATUS"] if has_vendedor else ["CLIENTE", "DESC", "PRECO_UNIT", "PRECO_CLUSTER_MEDIA", "IAP_CLUSTER", "STATUS"]
     lowest_iap = df_join.nsmallest(n_insights, "IAP_CLUSTER")[columns_insights]
@@ -336,10 +324,7 @@ def run(df: pd.DataFrame):
     highest_iap["IAP_CLUSTER"] = highest_iap["IAP_CLUSTER"].apply(lambda x: f"{x:.2f}".replace(".", ","))
     st.dataframe(highest_iap, use_container_width=True)
 
-    # Gráficos
     st.markdown("### 📈 Gráficos Complementares")
-    
-    # Boxplot com tooltips
     fig1 = px.box(
         df_join,
         x="PERFIL_CLIENTE",
@@ -360,7 +345,6 @@ def run(df: pd.DataFrame):
     fig1.update_layout(xaxis_tickangle=45)
     st.plotly_chart(fig1, use_container_width=True)
 
-    # Gráfico de barras com interatividade
     df_clientes_unicos = df_join.drop_duplicates(subset=["CLIENTE"])
     bar_data = df_clientes_unicos.groupby("STATUS")["CLIENTE"].nunique().reset_index()
     fig2 = px.bar(
@@ -376,12 +360,11 @@ def run(df: pd.DataFrame):
     )
     st.plotly_chart(fig2, use_container_width=True)
 
-    # Filtro por clique no gráfico de barras
-    if st.button("Limpar filtro de status"):
+    if st.button("Limpar filtro de status", key="clear_status"):
         st.session_state["selected_status"] = None
+        st.rerun()  # Forçar re-renderização
     st.markdown("*Clique nas barras acima para filtrar a tabela consolidada por status.*")
 
-    # Gráfico de pizza para proporção de faturamento
     pie_data = df_join.groupby("STATUS")["VL.BRUTO"].sum().reset_index()
     fig_pie = px.pie(
         pie_data,
@@ -395,8 +378,7 @@ def run(df: pd.DataFrame):
     )
     st.plotly_chart(fig_pie, use_container_width=True)
 
-    # Histograma com bins ajustáveis
-    bins = st.slider("Número de bins no histograma", 10, 100, 50)
+    bins = st.slider("Número de bins no histograma", 10, 100, 50, key="histogram_bins")
     fig3 = px.histogram(
         df_join,
         x="IAP_CLUSTER",
@@ -416,7 +398,6 @@ def run(df: pd.DataFrame):
     )
     st.plotly_chart(fig3, use_container_width=True)
 
-    # Histogramas para distribuição de faixas
     st.markdown("### 📊 Distribuição das Faixas de Clusterização")
     if cluster_by in ["Volume (QTDE)", "Ambos"]:
         fig_qtde = px.histogram(
@@ -459,7 +440,6 @@ def run(df: pd.DataFrame):
         st.plotly_chart(fig_vlbruto, use_container_width=True)
 
     st.success("✅ Análise validada e ajustada com base na lógica correta de clientes, clusters e indicadores.")
-    # Exportação dos dados analisados
     st.markdown("### 📥 Exportar Dados da Análise")
     if st.button("⬇️ Baixar análise em Excel", key="exportar_disparidade_button"):
         nome_arquivo = "analise_disparidade_precos.xlsx"
@@ -470,4 +450,3 @@ def run(df: pd.DataFrame):
             highest_iap.to_excel(writer, sheet_name="Top_Ajuste", index=False)
         with open(nome_arquivo, "rb") as f:
             st.download_button("📂 Baixar Arquivo", f, file_name=nome_arquivo)
-    

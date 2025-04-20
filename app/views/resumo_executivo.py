@@ -159,13 +159,19 @@ class Dashboard:
         data_fim = col2.date_input(
             "🗓️ Data Final", value=data_max, min_value=data_min, max_value=data_max
         )
+    
+        # Primeiro aplica o filtro por data
         df_filtered = self.df[
             (self.df["EMISSAO"] >= pd.to_datetime(data_ini)) &
             (self.df["EMISSAO"] <= pd.to_datetime(data_fim))
         ]
+    
+        # Depois aplica os demais filtros
         filtros = st.session_state.get("filtros", {})
-        df_filtered = self.processor.filtrar(filtros)
+        df_filtered = Agrupador(df_filtered).filtrar(filtros)
+    
         return df_filtered
+
     
     def display_pareto(self, df: pd.DataFrame, group_by: str, title: str):
         st.subheader(title)
